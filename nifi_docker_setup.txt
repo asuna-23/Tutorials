@@ -1,0 +1,39 @@
+Docker Compose Setup for Apache NiFi with JSON Mount
+
+1. Project Structure:
+etl-project/
+├── nifi/
+│   ├── TEST_TABLE.JSON
+│   ├── Dockerfile.nifi
+│   ├── entrypoint.sh
+│   └── set_permissions.sh
+└── docker-compose.yml
+
+2. docker-compose.yml Configuration:
+
+version: '3.8'
+
+services:
+  nifi:
+    image: apache/nifi:latest
+    container_name: nifi-container
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nifi:/opt/nifi/nifi-current/etl
+
+This mounts the local 'nifi' folder to '/opt/nifi/nifi-current/etl' in the container.
+
+3. Restart Docker Compose:
+cd etl-project
+docker-compose down
+docker-compose up -d
+
+4. Verify Inside the Container:
+docker exec -it nifi-container ls /opt/nifi/nifi-current/etl
+
+Expected output:
+TEST_TABLE.JSON
+Dockerfile.nifi
+entrypoint.sh
+set_permissions.sh

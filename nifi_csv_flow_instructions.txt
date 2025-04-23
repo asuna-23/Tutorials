@@ -1,0 +1,95 @@
+
+If you're switching from a JSON file to a CSV file, you can still follow the same general flow in NiFi — just with different processors or controller services for parsing and transforming the data.
+
+Here’s how you can adapt your flow for CSV:
+
+---
+
+### Updated Flow Objectives (with CSV)
+
+Suppose your TEST_TABLE.csv looks like:
+
+Test_No,Create_DateTime
+1,2025-04-23T09:15:00Z
+
+You still want to:
+
+1. Fetch the CSV every 20 seconds
+2. Read the last row
+3. Increment Test_No and update the timestamp
+4. Append a new row to the same CSV
+
+---
+
+### Recommended Flow (CSV Version)
+
+ListFile (20s)
+  └──> FetchFile
+        └──> ConvertRecord (CSVReader → JSONWriter)
+              └──> ExecuteScript (Transform JSON)
+                    └──> MergeContent (merge to array)
+                          └──> ConvertRecord (JSONReader → CSVWriter)
+                                └──> PutFile
+
+---
+
+### Key Details:
+
+#### 1. CSVReader & CSVWriter
+Use CSVReader and CSVWriter Controller Services for converting to and from JSON.  
+Set schema access strategy to:  
+Infer Schema
+
+Or define your own schema if needed.
+
+#### 2. ExecuteScript (Python or Groovy)
+This is where you’ll:
+- Parse the incoming JSON array
+- Get the last record
+- Create a new record with incremented Test_No and updated Create_DateTime
+- Append to the array
+
+Sample Python logic (in NiFi ExecuteScript):
+```python
+import json
+from datetime import datetime, timezone
+
+flowFile = session.get()
+if flowFile is not None:
+    text = IOUtils.toString(session.read(flowFile), StandardCharsets.UTF_8)
+    records = json.loads(text)
+
+    last = records[-1]
+    new_record = {
+        "Test_No": int(last["Test_No"]) + 1,
+        "Create_DateTime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    }
+
+    records.append(new_record)
+
+    outFlowFile = session.create()
+    session.write(outFlowFile, lambda out: out.write(json.dumps(records).encode('utf-8')))
+    outFlowFile = session.putAttribute(outFlowFile, "filename", "TEST_TABLE.csv")
+    session.transfer(outFlowFile, REL_SUCCESS)
+```
+
+---
+
+### Final CSV Output
+
+The file will look like:
+
+Test_No,Create_DateTime
+1,2025-04-23T09:15:00Z
+2,2025-04-23T10:10:00Z
+
+---
+
+### Important Notes:
+- PutFile must overwrite the file (replace strategy).
+- NiFi handles CSV as structured data using Record-oriented processors (ConvertRecord, QueryRecord, etc.).
+- If you're dealing with a very large CSV, consider using TailFile or SplitText + ExtractText.
+
+---
+
+Would you like a full sample flow template with the CSV version? Or maybe help writing the NiFi schema definition if not using "Infer Schema"?

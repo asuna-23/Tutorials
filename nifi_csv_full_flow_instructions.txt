@@ -1,0 +1,233 @@
+
+If you want to mount only a specific folder (like your nifi folder inside etl-project) into your Docker container, you can absolutely do that—this is a clean and common approach.
+
+---
+
+### Example: Mount only the nifi folder
+Assuming your folder structure is:
+
+/home/youruser/etl-project/nifi
+
+And it contains TEST_TABLE.JSON, Dockerfile.nifi, scripts, etc.
+
+You can mount it like this when running your container:
+
+```bash
+docker run -d   --name nifi   -p 8080:8080   -v /home/youruser/etl-project/nifi:/opt/nifi/nifi-files  # mount ONLY the nifi folder
+  apache/nifi:latest
+```
+
+In this example:
+- On your **host**: /home/youruser/etl-project/nifi
+- Inside the **container**: /opt/nifi/nifi-files
+
+---
+
+### In NiFi Flow
+Set your file-related processors like ListFile, FetchFile, PutFile to point to:
+```
+/opt/nifi/nifi-files/TEST_TABLE.JSON
+```
+
+Or just:
+
+```
+/opt/nifi/nifi-files
+```
+
+(depending on how you structure the processor inputs)
+
+---
+
+### Bonus Tip: Persist Data
+If you want NiFi state (flow config, repos) to persist across container restarts, also mount:
+```bash
+-v nifi_data:/opt/nifi/nifi-current/data
+```
+
+---
+
+Let me know if you’re using docker-compose, I can help you set that up too.
+
+
+---
+
+Perfect! With Docker Compose, you can easily mount just your nifi folder and keep everything clean and repeatable.
+
+Here’s a sample docker-compose.yml that matches your etl-project/nifi folder structure and needs:
+
+---
+
+### `docker-compose.yml`
+Put this file inside your `etl-project` folder (same level as the `nifi` folder):
+
+```yaml
+version: '3.8'
+
+services:
+  nifi:
+    image: apache/nifi:latest
+    container_name: nifi
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nifi:/opt/nifi/nifi-files  # mount ONLY the nifi folder
+    environment:
+      - NIFI_WEB_HTTP_PORT=8080
+    restart: unless-stopped
+```
+
+---
+
+### Project Structure
+```
+etl-project/
+│
+├── docker-compose.yml
+└── nifi/
+    ├── TEST_TABLE.JSON
+    ├── Dockerfile.nifi
+    ├── entrypoint.sh
+    ├── set_permissions.sh
+    └── (other files/scripts)
+```
+
+---
+
+### How to Use
+
+From your `etl-project` directory, run:
+
+```bash
+docker-compose up -d
+```
+
+Then access NiFi at:  
+[http://localhost:8080/nifi](http://localhost:8080/nifi)
+
+---
+
+### In Your NiFi Flow
+In processors like `ListFile`, `FetchFile`, and `PutFile`, use this path:
+
+```
+/opt/nifi/nifi-files/TEST_TABLE.JSON
+```
+
+Or just:
+
+```
+/opt/nifi/nifi-files
+```
+
+(depending on processor type)
+
+---
+
+Let me know if you want this to auto-load a NiFi flow or if you want to integrate your scripts into the container via `Dockerfile.nifi`.
+
+
+---
+
+If you're switching from a JSON file to a CSV file, you can still follow the same general flow in NiFi — just with different processors or controller services for parsing and transforming the data.
+
+Here’s how you can adapt your flow for CSV:
+
+---
+
+### Updated Flow Objectives (with CSV)
+
+Suppose your TEST_TABLE.csv looks like:
+
+```
+Test_No,Create_DateTime
+1,2025-04-23T09:15:00Z
+```
+
+You still want to:
+
+1. Fetch the CSV every 20 seconds
+2. Read the last row
+3. Increment Test_No and update the timestamp
+4. Append a new row to the same CSV
+
+---
+
+### Recommended Flow (CSV Version)
+
+```
+ListFile (20s)
+  └──> FetchFile
+        └──> ConvertRecord (CSVReader → JSONWriter)
+              └──> ExecuteScript (Transform JSON)
+                    └──> MergeContent (merge to array)
+                          └──> ConvertRecord (JSONReader → CSVWriter)
+                                └──> PutFile
+```
+
+---
+
+### Key Details:
+
+#### 1. CSVReader & CSVWriter
+Use CSVReader and CSVWriter Controller Services for converting to and from JSON.  
+Set schema access strategy to:  
+```text
+Infer Schema
+```
+
+Or define your own schema if needed.
+
+#### 2. ExecuteScript (Python or Groovy)
+This is where you’ll:
+- Parse the incoming JSON array
+- Get the last record
+- Create a new record with incremented Test_No and updated Create_DateTime
+- Append to the array
+
+Sample Python logic (in NiFi ExecuteScript):
+```python
+import json
+from datetime import datetime, timezone
+
+flowFile = session.get()
+if flowFile is not None:
+    text = IOUtils.toString(session.read(flowFile), StandardCharsets.UTF_8)
+    records = json.loads(text)
+
+    last = records[-1]
+    new_record = {
+        "Test_No": int(last["Test_No"]) + 1,
+        "Create_DateTime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    }
+
+    records.append(new_record)
+
+    outFlowFile = session.create()
+    session.write(outFlowFile, lambda out: out.write(json.dumps(records).encode('utf-8')))
+    outFlowFile = session.putAttribute(outFlowFile, "filename", "TEST_TABLE.csv")
+    session.transfer(outFlowFile, REL_SUCCESS)
+```
+
+---
+
+### Final CSV Output
+
+The file will look like:
+
+```
+Test_No,Create_DateTime
+1,2025-04-23T09:15:00Z
+2,2025-04-23T10:10:00Z
+```
+
+---
+
+### Important Notes:
+- PutFile must overwrite the file (replace strategy).
+- NiFi handles CSV as structured data using Record-oriented processors (ConvertRecord, QueryRecord, etc.).
+- If you're dealing with a very large CSV, consider using TailFile or SplitText + ExtractText.
+
+---
+
+Would you like a full sample flow template with the CSV version? Or maybe help writing the NiFi schema definition if not using "Infer Schema"?
