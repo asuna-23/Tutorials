@@ -1,0 +1,110 @@
+
+Goal Recap:
+- Start with existing TEST_TABLE.JSON (an array).
+- Get the last object from the array.
+- Increment Test_No by +1.
+- Set Create_DateTime to current UTC time (UTC+0 format).
+- Append this new object into the original JSON array.
+
+NiFi Flow Overview:
+[Fetch TEST_TABLE.JSON] 
+    --> [EvaluateJsonPath] 
+    --> [ExecuteScript (for increment + timestamp)]
+    --> [Merge with Original Array] 
+    --> [PutFile (overwrite TEST_TABLE.JSON)]
+
+Detailed Steps:
+
+1. Fetch the file
+Use GetFile or FetchFile to get your TEST_TABLE.JSON.
+- Points to the folder containing your JSON file.
+
+2. Extract the Last Object
+Use EvaluateJsonPath processor.
+- Expression: 
+    To get last element's Test_No: 
+    $. [-1].Test_No
+- Save it into flowfile attributes (example: last_test_no)
+
+Important: set "Destination" = flowfile-attribute
+
+3. ExecuteScript (Modify Object)
+Use ExecuteScript (language: Groovy, Python, or JavaScript) to:
+- Increment last_test_no by 1.
+- Get current UTC time.
+- Create a new JSON object.
+
+Example Groovy Script:
+
+import java.nio.charset.StandardCharsets
+import groovy.json.JsonSlurper
+import groovy.json.JsonOutput
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+
+def flowFile = session.get()
+if (!flowFile) return
+
+flowFile = session.write(flowFile, { inputStream, outputStream -> 
+    def text = inputStream.getText('UTF-8')
+    def json = new JsonSlurper().parseText(text)
+    
+    // Increment last Test_No
+    def lastTestNo = json[-1].Test_No
+    def newTestNo = lastTestNo + 1
+    
+    // Get current UTC DateTime
+    def now = ZonedDateTime.now(java.time.ZoneOffset.UTC)
+    def currentTimeStr = now.format(DateTimeFormatter.ISO_INSTANT)
+    
+    // New Object
+    def newEntry = [
+        "Test_No": newTestNo,
+        "Create_DateTime": currentTimeStr
+    ]
+    
+    // Append to the array
+    json.add(newEntry)
+    
+    // Write it back
+    outputStream.write(JsonOutput.prettyPrint(JsonOutput.toJson(json)).getBytes(StandardCharsets.UTF_8))
+} as StreamCallback)
+
+session.transfer(flowFile, REL_SUCCESS)
+
+Summary inside the script:
+- Read the full array.
+- Take json[-1].Test_No.
+- Add 1 to it.
+- Get current UTC timestamp.
+- Create a new object.
+- Append it to the JSON array.
+- Write it back (formatted).
+
+4. Save back the file
+Use PutFile to overwrite or replace the old TEST_TABLE.JSON file.
+
+Summary of Processors Needed:
+
+| Processor | Purpose |
+|:---|:---|
+| FetchFile | Load existing TEST_TABLE.JSON |
+| EvaluateJsonPath | (optional, if you want last Test_No separately) |
+| ExecuteScript | Increment Test_No, update Create_DateTime, append |
+| PutFile | Save the updated file |
+
+Your expected output will now be:
+
+[
+  {
+    "Test_No": 1,
+    "Create_DateTime": "2025-04-23T09:15:00Z"
+  },
+  {
+    "Test_No": 2,
+    "Create_DateTime": "2025-04-26T08:52:00Z"
+  }
+]
+
+Extra Options:
+- Instead of ExecuteScript, you could also do it with JoltTransformJSON + UpdateRecord combo (but script is easier here because you're dynamically adding new objects).
